@@ -67,7 +67,7 @@ Secrets: `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`. Output: `deployment-ur
 
 ## Releasing
 
-Push a `vX.Y.Z` tag. The `release` workflow publishes a GitHub release and moves the `vX` tag to it, so callers on `@vX` pick it up.
+Either push a `vX.Y.Z` tag, or run the `release` workflow from `main` (Actions → release → Run workflow) with the version; the latter tags the current `main` commit. The workflow publishes a GitHub release and moves the `vX` tag to it, so callers on `@vX` pick it up.
 
 ## Development
 

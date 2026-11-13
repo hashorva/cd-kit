@@ -1,13 +1,28 @@
-# On a vX.Y.Z tag, publish a GitHub release and move the vX major tag so
-# callers pinned to @vX pick up the release.
+# Publish a vX.Y.Z GitHub release and move the vX major tag so callers
+# pinned to @vX pick it up.
+#
+# Two ways in:
+#   - push a vX.Y.Z tag, or
+#   - run this workflow from main ("Run workflow" in the Actions tab) with a
+#     version; it tags the current main commit first.
 name: release
 
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, e.g. v0.1.0
+        required: true
+        type: string
 
 permissions:
   contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -15,10 +30,42 @@ jobs:
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        env:
+          EVENT: ${{ github.event_name }}
+          INPUT: ${{ inputs.version }}
+          REF: ${{ github.ref }}
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          if [[ "$EVENT" == workflow_dispatch ]]; then
+            [[ "$REF" == refs/heads/main ]] || { echo "::error::Run from main, not $REF"; exit 1; }
+            tag="$INPUT"
+          else
+            tag="$REF_NAME"
+          fi
+          [[ "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::Version must look like v1.2.3, got '$tag'"; exit 1; }
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Create tag
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::Tag $TAG already exists"; exit 1
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "cd-kit $TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$TAG"
 
       - name: Move major tag
         env:
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: |
           major="${TAG%%.*}"
           git tag -f "$major" "$TAG^{commit}"
@@ -27,5 +74,5 @@ jobs:
       - name: Create release
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          TAG: ${{ steps.version.outputs.tag }}
         run: gh release create "$TAG" --verify-tag --generate-notes
