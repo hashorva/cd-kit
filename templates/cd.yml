@@ -1,0 +1,35 @@
+# Installed by cd-kit (https://github.com/hashorva/cd-kit) at __CD_KIT_REF__.
+# Re-run the installer with --force to update; edit the inputs freely.
+name: cd
+
+on:
+  pull_request:
+  push:
+    branches: [__BRANCH__]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  ci:
+    uses: hashorva/cd-kit/.github/workflows/ci.yml@__CD_KIT_REF__
+    with:
+      runs-on: '__RUNS_ON__'
+      working-directory: __WORKING_DIRECTORY__
+
+  deploy:
+    needs: ci
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/__BRANCH__'
+    uses: hashorva/cd-kit/.github/workflows/deploy-cloudflare.yml@__CD_KIT_REF__
+    with:
+      runs-on: '__RUNS_ON__'
+      working-directory: __WORKING_DIRECTORY__
+      environment: production
+    secrets:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

@@ -1,0 +1,39 @@
+# Checks cd-kit itself: lints workflows and the installer, then installs
+# into a scratch repo and lints the generated caller workflow.
+name: self-test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: shellcheck
+        run: shellcheck install.sh tests/*.sh
+
+      - name: Install actionlint
+        run: bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
+
+      - name: actionlint
+        run: ./actionlint -color
+
+      - name: Installer tests
+        run: bash tests/install.sh
+
+      - name: Lint generated caller workflow
+        run: |
+          tmp=$(mktemp -d)
+          echo '{"name":"t","scripts":{"build":"true"}}' > "$tmp/package.json"
+          bash install.sh --ref v0 --target "$tmp"
+          ./actionlint "$tmp/.github/workflows/cd.yml"
