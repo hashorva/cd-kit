@@ -1,0 +1,165 @@
+# Reusable deploy workflow: build (or reuse a CI artifact) and deploy to
+# Cloudflare Workers with wrangler.
+#
+# Callers pin a release tag:
+#   uses: hashorva/cd-kit/.github/workflows/deploy-cloudflare.yml@v0
+#   secrets:
+#     CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+#     CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+name: deploy-cloudflare
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: >-
+          JSON runner label(s). Public repos must keep the GitHub-hosted
+          default. Private repos may pass e.g. '["self-hosted","macOS","mini"]'.
+        type: string
+        default: '"ubuntu-latest"'
+      working-directory:
+        description: Directory containing package.json and the wrangler config.
+        type: string
+        default: "."
+      node-version:
+        description: Node version, used when node-version-file is empty.
+        type: string
+        default: "22"
+      node-version-file:
+        description: File setup-node reads the Node version from. Takes precedence over node-version.
+        type: string
+        default: ""
+      environment:
+        description: GitHub deployment environment (holds protection rules and secrets).
+        type: string
+        default: production
+      wrangler-environment:
+        description: Wrangler --env name. Empty uses the top-level wrangler config.
+        type: string
+        default: ""
+      wrangler-command:
+        description: Wrangler command, e.g. "deploy" or "versions upload" for a preview.
+        type: string
+        default: deploy
+      wrangler-version:
+        description: Wrangler version. Empty uses the version in the project's lockfile.
+        type: string
+        default: ""
+      build-command:
+        description: 'Build command. Empty runs the "build" script if present; "-" skips (e.g. wrangler builds itself).'
+        type: string
+        default: ""
+      build-artifact-path:
+        description: Download the "build" artifact from ci.yml into this path (relative to working-directory) instead of building again.
+        type: string
+        default: ""
+    secrets:
+      CLOUDFLARE_API_TOKEN:
+        required: true
+      CLOUDFLARE_ACCOUNT_ID:
+        required: true
+    outputs:
+      deployment-url:
+        description: URL wrangler reported for the deployment, if any.
+        value: ${{ jobs.deploy.outputs.deployment-url }}
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 20
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ steps.wrangler.outputs.deployment-url }}
+    concurrency:
+      group: cd-kit-deploy-${{ github.repository }}-${{ inputs.environment }}
+      cancel-in-progress: false
+    outputs:
+      deployment-url: ${{ steps.wrangler.outputs.deployment-url }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Detect package manager
+        id: pm
+        run: |
+          if   [[ -f pnpm-lock.yaml ]]; then pm=pnpm
+          elif [[ -f yarn.lock ]]; then pm=yarn
+          elif [[ -f bun.lock || -f bun.lockb ]]; then pm=bun
+          else pm=npm
+          fi
+          echo "name=$pm" >> "$GITHUB_OUTPUT"
+          echo "Detected package manager: $pm"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version-file == '' && inputs.node-version || '' }}
+          node-version-file: ${{ inputs.node-version-file != '' && format('{0}/{1}', inputs.working-directory, inputs.node-version-file) || '' }}
+          cache: ${{ steps.pm.outputs.name == 'npm' && 'npm' || '' }}
+          cache-dependency-path: ${{ steps.pm.outputs.name == 'npm' && format('{0}/package-lock.json', inputs.working-directory) || '' }}
+
+      - name: Enable corepack (pnpm, yarn)
+        if: steps.pm.outputs.name == 'pnpm' || steps.pm.outputs.name == 'yarn'
+        run: corepack enable
+
+      - uses: oven-sh/setup-bun@v2
+        if: steps.pm.outputs.name == 'bun'
+
+      - name: Install dependencies
+        env:
+          PM: ${{ steps.pm.outputs.name }}
+        run: |
+          case "$PM" in
+            npm)  npm ci ;;
+            pnpm) pnpm install --frozen-lockfile ;;
+            yarn)
+              if [[ "$(yarn --version)" == 1.* ]]; then
+                yarn install --frozen-lockfile
+              else
+                yarn install --immutable
+              fi
+              ;;
+            bun)  bun install --frozen-lockfile ;;
+          esac
+
+      - name: Download build artifact
+        if: inputs.build-artifact-path != ''
+        uses: actions/download-artifact@v4
+        with:
+          name: build
+          path: ${{ inputs.working-directory }}/${{ inputs.build-artifact-path }}
+
+      - name: Build
+        if: inputs.build-artifact-path == ''
+        env:
+          PM: ${{ steps.pm.outputs.name }}
+          CMD: ${{ inputs.build-command }}
+        run: |
+          if [[ "$CMD" == "-" ]]; then
+            echo "Skipped: build"
+          elif [[ -n "$CMD" ]]; then
+            eval "$CMD"
+          elif node -e 'process.exit(require("./package.json").scripts?.build ? 0 : 1)'; then
+            "$PM" run build
+          else
+            echo 'No "build" script in package.json; skipping.'
+          fi
+
+      - name: Deploy with wrangler
+        id: wrangler
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: ${{ inputs.working-directory }}
+          packageManager: ${{ steps.pm.outputs.name }}
+          wranglerVersion: ${{ inputs.wrangler-version }}
+          environment: ${{ inputs.wrangler-environment }}
+          command: ${{ inputs.wrangler-command }}

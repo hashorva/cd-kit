@@ -1,0 +1,179 @@
+# Reusable CI workflow: install, lint, typecheck, test, build.
+#
+# Callers pin a release tag:
+#   uses: hashorva/cd-kit/.github/workflows/ci.yml@v0
+#
+# Each phase runs the matching package.json script when it exists and is
+# skipped otherwise. Override a phase with its *-command input, or pass "-"
+# to skip it outright.
+name: ci
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: >-
+          JSON runner label(s). Public repos must keep the GitHub-hosted
+          default. Private repos may pass e.g. '["self-hosted","macOS","mini"]'.
+        type: string
+        default: '"ubuntu-latest"'
+      working-directory:
+        description: Directory containing package.json.
+        type: string
+        default: "."
+      node-version:
+        description: Node version, used when node-version-file is empty.
+        type: string
+        default: "22"
+      node-version-file:
+        description: File setup-node reads the Node version from (.nvmrc, .node-version, package.json). Takes precedence over node-version.
+        type: string
+        default: ""
+      lint-command:
+        description: 'Lint command. Empty runs the "lint" script if present; "-" skips.'
+        type: string
+        default: ""
+      typecheck-command:
+        description: 'Typecheck command. Empty runs the "typecheck" script if present; "-" skips.'
+        type: string
+        default: ""
+      test-command:
+        description: 'Test command. Empty runs the "test" script if present; "-" skips.'
+        type: string
+        default: ""
+      build-command:
+        description: 'Build command. Empty runs the "build" script if present; "-" skips.'
+        type: string
+        default: ""
+      build-artifact-path:
+        description: Path (relative to working-directory) uploaded as the "build" artifact for a later deploy job. Empty uploads nothing.
+        type: string
+        default: ""
+    outputs:
+      package-manager:
+        description: Detected package manager (npm, pnpm, yarn or bun).
+        value: ${{ jobs.ci.outputs.package-manager }}
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 30
+    outputs:
+      package-manager: ${{ steps.pm.outputs.name }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Detect package manager
+        id: pm
+        run: |
+          if   [[ -f pnpm-lock.yaml ]]; then pm=pnpm
+          elif [[ -f yarn.lock ]]; then pm=yarn
+          elif [[ -f bun.lock || -f bun.lockb ]]; then pm=bun
+          else pm=npm
+          fi
+          echo "name=$pm" >> "$GITHUB_OUTPUT"
+          echo "Detected package manager: $pm"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version-file == '' && inputs.node-version || '' }}
+          node-version-file: ${{ inputs.node-version-file != '' && format('{0}/{1}', inputs.working-directory, inputs.node-version-file) || '' }}
+          cache: ${{ steps.pm.outputs.name == 'npm' && 'npm' || '' }}
+          cache-dependency-path: ${{ steps.pm.outputs.name == 'npm' && format('{0}/package-lock.json', inputs.working-directory) || '' }}
+
+      - name: Enable corepack (pnpm, yarn)
+        if: steps.pm.outputs.name == 'pnpm' || steps.pm.outputs.name == 'yarn'
+        run: corepack enable
+
+      - uses: oven-sh/setup-bun@v2
+        if: steps.pm.outputs.name == 'bun'
+
+      - name: Install dependencies
+        env:
+          PM: ${{ steps.pm.outputs.name }}
+        run: |
+          case "$PM" in
+            npm)  npm ci ;;
+            pnpm) pnpm install --frozen-lockfile ;;
+            yarn)
+              if [[ "$(yarn --version)" == 1.* ]]; then
+                yarn install --frozen-lockfile
+              else
+                yarn install --immutable
+              fi
+              ;;
+            bun)  bun install --frozen-lockfile ;;
+          esac
+
+      - name: Lint
+        env: { PM: "${{ steps.pm.outputs.name }}", SCRIPT: lint, CMD: "${{ inputs.lint-command }}" }
+        run: |
+          if [[ "$CMD" == "-" ]]; then
+            echo "Skipped: $SCRIPT"
+          elif [[ -n "$CMD" ]]; then
+            eval "$CMD"
+          elif node -e 'process.exit(require("./package.json").scripts?.[process.argv[1]] ? 0 : 1)' "$SCRIPT"; then
+            "$PM" run "$SCRIPT"
+          else
+            echo "No \"$SCRIPT\" script in package.json; skipping."
+          fi
+
+      - name: Typecheck
+        env: { PM: "${{ steps.pm.outputs.name }}", SCRIPT: typecheck, CMD: "${{ inputs.typecheck-command }}" }
+        run: |
+          if [[ "$CMD" == "-" ]]; then
+            echo "Skipped: $SCRIPT"
+          elif [[ -n "$CMD" ]]; then
+            eval "$CMD"
+          elif node -e 'process.exit(require("./package.json").scripts?.[process.argv[1]] ? 0 : 1)' "$SCRIPT"; then
+            "$PM" run "$SCRIPT"
+          else
+            echo "No \"$SCRIPT\" script in package.json; skipping."
+          fi
+
+
+      - name: Test
+        env: { PM: "${{ steps.pm.outputs.name }}", SCRIPT: test, CMD: "${{ inputs.test-command }}" }
+        run: |
+          if [[ "$CMD" == "-" ]]; then
+            echo "Skipped: $SCRIPT"
+          elif [[ -n "$CMD" ]]; then
+            eval "$CMD"
+          elif node -e 'process.exit(require("./package.json").scripts?.[process.argv[1]] ? 0 : 1)' "$SCRIPT"; then
+            "$PM" run "$SCRIPT"
+          else
+            echo "No \"$SCRIPT\" script in package.json; skipping."
+          fi
+
+
+      - name: Build
+        env: { PM: "${{ steps.pm.outputs.name }}", SCRIPT: build, CMD: "${{ inputs.build-command }}" }
+        run: |
+          if [[ "$CMD" == "-" ]]; then
+            echo "Skipped: $SCRIPT"
+          elif [[ -n "$CMD" ]]; then
+            eval "$CMD"
+          elif node -e 'process.exit(require("./package.json").scripts?.[process.argv[1]] ? 0 : 1)' "$SCRIPT"; then
+            "$PM" run "$SCRIPT"
+          else
+            echo "No \"$SCRIPT\" script in package.json; skipping."
+          fi
+
+
+      - name: Upload build artifact
+        if: inputs.build-artifact-path != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: build
+          path: ${{ inputs.working-directory }}/${{ inputs.build-artifact-path }}
+          if-no-files-found: error
+          retention-days: 7
