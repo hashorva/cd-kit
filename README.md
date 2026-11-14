@@ -13,14 +13,15 @@ See [hashorva/finduck#237](https://github.com/hashorva/finduck/issues/237).
 The installer writes one caller workflow, `cd.yml`, into the consuming repository. It calls cd-kit's reusable workflows at the pinned tag: `ci.yml` on every run, then `deploy-cloudflare.yml` only for a push (or manual run) on the production branch.
 
 ```mermaid
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "ui-sans-serif, system-ui, sans-serif", "lineColor": "#62748e", "primaryTextColor": "#0f172b", "edgeLabelBackground": "#f1f5f9", "clusterBkg": "#f8fafc", "clusterBorder": "#cad5e2", "titleColor": "#314158"}}}%%
 flowchart TD
   trigger(["pull_request, push to main,<br/>or workflow_dispatch"]) --> detect
 
   subgraph ci ["ci.yml"]
     direction TB
-    detect["Detect package manager from lockfile<br/>npm · pnpm · yarn · bun"] --> install["Install with frozen lockfile"]
-    install --> phases["lint → typecheck → test → build<br/>each runs only if its script exists"]
-    phases -.-> artifact[/"build artifact<br/>(if build-artifact-path is set)"/]
+    detect("Detect package manager from lockfile<br/>npm · pnpm · yarn · bun") --> install("Install with frozen lockfile")
+    install --> phases("lint → typecheck → test → build<br/>each runs only if its script exists")
+    phases -.-> artifact("build artifact<br/>(if build-artifact-path is set)")
   end
 
   phases --> gate{"push or manual run<br/>on the production branch?"}
@@ -29,41 +30,62 @@ flowchart TD
 
   subgraph deploy ["deploy-cloudflare.yml"]
     direction TB
-    dinstall["environment: production, one deploy at a time<br/>Detect package manager and install"] --> reuse{"build-artifact-path set?"}
-    reuse -- yes --> download["Download build artifact"]
-    reuse -- no --> rebuild["Build"]
-    download --> wrangler["wrangler deploy<br/>(CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID)"]
+    dinstall("environment: production, one deploy at a time<br/>Detect package manager and install") --> reuse{"build-artifact-path set?"}
+    reuse -- yes --> download("Download build artifact")
+    reuse -- no --> rebuild("Build")
+    download --> wrangler("wrangler deploy<br/>(CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID)")
     rebuild --> wrangler
   end
 
   artifact -.-> download
-  wrangler --> workers[("Cloudflare Workers")]
+  wrangler --> workers("Cloudflare Workers")
+
+  classDef event fill:#f1f5f9,stroke:#62748e,color:#1d293d
+  classDef ci fill:#dff2fe,stroke:#0084d1,color:#024a70
+  classDef deploy fill:#d0fae5,stroke:#009966,color:#004f3b
+  classDef decision fill:#fef3c6,stroke:#e17100,color:#7b3306
+  classDef target fill:#ffedd4,stroke:#f54900,color:#7e2a0c
+  class trigger,done event
+  class detect,install,phases,artifact ci
+  class dinstall,download,rebuild,wrangler deploy
+  class gate,reuse decision
+  class workers target
 ```
 
 Installing, choosing a runner and releasing tie the two repositories together. Callers pin `@vX`, which the `release` workflow moves to each new `vX.Y.Z`:
 
 ```mermaid
+%%{init: {"theme": "base", "themeVariables": {"fontFamily": "ui-sans-serif, system-ui, sans-serif", "lineColor": "#62748e", "primaryTextColor": "#0f172b", "edgeLabelBackground": "#f1f5f9", "clusterBkg": "#f8fafc", "clusterBorder": "#cad5e2", "titleColor": "#314158"}}}%%
 flowchart LR
   subgraph kit ["hashorva/cd-kit"]
     direction TB
-    cut["push a vX.Y.Z tag,<br/>or run release from main"] --> release["release.yml"]
-    release --> ghrelease["GitHub release vX.Y.Z"]
-    release --> major["move the vX tag"]
+    cut("push a vX.Y.Z tag,<br/>or run release from main") --> release("release.yml")
+    release --> ghrelease("GitHub release vX.Y.Z")
+    release --> major("move the vX tag")
   end
 
   subgraph consumer ["consuming repository"]
     direction TB
-    run["install.sh --ref vX"] --> runner{"--runner"}
-    runner -- github --> hosted["runs-on: ubuntu-latest"]
+    run("install.sh --ref vX") --> runner{"--runner"}
+    runner -- github --> hosted("runs-on: ubuntu-latest")
     runner -- mini --> visibility{"repository private?"}
-    visibility -- yes --> mini["runs-on: self-hosted, macOS, mini"]
+    visibility -- yes --> mini("runs-on: self-hosted, macOS, mini")
     visibility -- "no / unknown" --> refused(["refused"])
-    hosted --> cd[".github/workflows/cd.yml<br/>uses: hashorva/cd-kit/…@vX"]
+    hosted --> cd(".github/workflows/cd.yml<br/>uses: hashorva/cd-kit/…@vX")
     mini --> cd
   end
 
   major -. "install.sh and templates fetched at vX" .-> run
   cd -- "ci.yml and deploy-cloudflare.yml resolved at vX" --> major
+
+  classDef release fill:#ede9fe,stroke:#7f22fe,color:#4d179a
+  classDef install fill:#dff2fe,stroke:#0084d1,color:#024a70
+  classDef decision fill:#fef3c6,stroke:#e17100,color:#7b3306
+  classDef refused fill:#ffe4e6,stroke:#ec003f,color:#8b0836
+  class cut,release,ghrelease,major release
+  class run,hosted,mini,cd install
+  class runner,visibility decision
+  class refused refused
 ```
 
 ## Install
