@@ -83,7 +83,7 @@ jobs:
           echo "name=$pm" >> "$GITHUB_OUTPUT"
           echo "Detected package manager: $pm"
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: ${{ inputs.node-version-file == '' && inputs.node-version || '' }}
           node-version-file: ${{ inputs.node-version-file != '' && format('{0}/{1}', inputs.working-directory, inputs.node-version-file) || '' }}
