@@ -24,7 +24,7 @@ on:
       node-version:
         description: Node version, used when node-version-file is empty.
         type: string
-        default: "22"
+        default: "24"
       node-version-file:
         description: File setup-node reads the Node version from (.nvmrc, .node-version, package.json). Takes precedence over node-version.
         type: string
@@ -68,7 +68,7 @@ jobs:
         shell: bash
         working-directory: ${{ inputs.working-directory }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
@@ -83,7 +83,7 @@ jobs:
           echo "name=$pm" >> "$GITHUB_OUTPUT"
           echo "Detected package manager: $pm"
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ inputs.node-version-file == '' && inputs.node-version || '' }}
           node-version-file: ${{ inputs.node-version-file != '' && format('{0}/{1}', inputs.working-directory, inputs.node-version-file) || '' }}
@@ -94,7 +94,7 @@ jobs:
         if: steps.pm.outputs.name == 'pnpm' || steps.pm.outputs.name == 'yarn'
         run: corepack enable
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         if: steps.pm.outputs.name == 'bun'
 
       - name: Install dependencies
@@ -171,7 +171,7 @@ jobs:
 
       - name: Upload build artifact
         if: inputs.build-artifact-path != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: build
           path: ${{ inputs.working-directory }}/${{ inputs.build-artifact-path }}

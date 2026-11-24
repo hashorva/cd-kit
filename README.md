@@ -125,7 +125,7 @@ Detects the package manager from the lockfile (npm, pnpm, yarn, bun), installs w
 | --- | --- | --- |
 | `runs-on` | `'"ubuntu-latest"'` | JSON label or array |
 | `working-directory` | `.` | |
-| `node-version` / `node-version-file` | `22` / | the file wins when set |
+| `node-version` / `node-version-file` | `24` / | the file wins when set |
 | `lint-command`, `typecheck-command`, `test-command`, `build-command` | | override a phase; `-` skips it |
 | `build-artifact-path` | | upload this path as the `build` artifact |
 

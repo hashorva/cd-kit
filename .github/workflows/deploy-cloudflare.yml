@@ -24,7 +24,7 @@ on:
       node-version:
         description: Node version, used when node-version-file is empty.
         type: string
-        default: "22"
+        default: "24"
       node-version-file:
         description: File setup-node reads the Node version from. Takes precedence over node-version.
         type: string
@@ -83,7 +83,7 @@ jobs:
         shell: bash
         working-directory: ${{ inputs.working-directory }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           persist-credentials: false
 
@@ -98,7 +98,7 @@ jobs:
           echo "name=$pm" >> "$GITHUB_OUTPUT"
           echo "Detected package manager: $pm"
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: ${{ inputs.node-version-file == '' && inputs.node-version || '' }}
           node-version-file: ${{ inputs.node-version-file != '' && format('{0}/{1}', inputs.working-directory, inputs.node-version-file) || '' }}
@@ -109,7 +109,7 @@ jobs:
         if: steps.pm.outputs.name == 'pnpm' || steps.pm.outputs.name == 'yarn'
         run: corepack enable
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         if: steps.pm.outputs.name == 'bun'
 
       - name: Install dependencies
@@ -131,7 +131,7 @@ jobs:
 
       - name: Download build artifact
         if: inputs.build-artifact-path != ''
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: build
           path: ${{ inputs.working-directory }}/${{ inputs.build-artifact-path }}
@@ -154,7 +154,7 @@ jobs:
 
       - name: Deploy with wrangler
         id: wrangler
-        uses: cloudflare/wrangler-action@v3
+        uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3.15.0
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
