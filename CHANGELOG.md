@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+- Added: `gate` job in the caller template. It always runs and fails unless CI succeeded; require it in rulesets instead of `ci`.
+- Added: deploys also run on `vX.Y.Z` tags (an older tag is a rollback); the new `release` job in the template uses `deploy-cloudflare.yml` with no stand-aside.
+- Added: hold deploys with the repository variable `CD_DEPLOY_ENABLED=false`; unset still deploys.
+- Added: `deploy-cloudflare.yml` input `production-branch` and output `deployed`. A run that is no longer the tip of the branch stands aside before installing.
+- Added: `post-deploy.yml`, an optional command run after a successful deploy, in the same environment and its own queue; the template passes `vars.CD_MIGRATE_COMMAND`.
+- Added: `catch-up.yml` and `install.sh --catch-up` (writes `cd-catch-up.yml`): dispatches `cd` when the branch tip has no run, for merges made with `GITHUB_TOKEN`.
+- Added: `pick-runner.yml`, an opt-in picker that uses included hosted minutes first and falls back to self-hosted. Not used by the template or cd-kit's own CI. Uses `actions/github-script` v9.0.0.
+- Changed: `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` are optional workflow secrets and are read from the job's environment; the template no longer passes them. Callers that pass repository secrets keep working.
+- Changed: every template job, including `gate`, takes the installed `runs-on`.
+- Changed: `self-test.yml` uses actionlint 1.7.12 (was 1.7.7).
+- Docs: README flowcharts updated; `AGENTS.md` and the `flowchart-check` workflow require README changes with workflow changes.
+
 ## v0.1.1
 
 - Changed: the default `node-version` input of `ci.yml` and `deploy-cloudflare.yml` is now `24` (was `22`). Callers can keep Node 22 by passing `node-version: "22"`. `node-version-file` still takes precedence when set.

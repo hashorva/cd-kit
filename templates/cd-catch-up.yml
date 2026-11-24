@@ -1,0 +1,29 @@
+# Installed by cd-kit (https://github.com/hashorva/cd-kit) at __CD_KIT_REF__.
+# Opt-in catch-up: merges made with GITHUB_TOKEN (for example Dependabot
+# auto-merge) start no push workflow. Each hour this starts `cd` on __BRANCH__
+# if its tip has no run. It uses GITHUB_TOKEN only (workflow_dispatch is the
+# one event it may trigger); no extra token.
+name: cd-catch-up
+
+on:
+  schedule:
+    - cron: "7 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cd-catch-up
+  cancel-in-progress: false
+
+jobs:
+  catch-up:
+    permissions:
+      actions: write
+      contents: read
+    uses: hashorva/cd-kit/.github/workflows/catch-up.yml@__CD_KIT_REF__
+    with:
+      runs-on: '__RUNS_ON__'
+      branch: __BRANCH__
+      workflow: cd.yml
