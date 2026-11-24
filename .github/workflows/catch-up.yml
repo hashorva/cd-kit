@@ -1,0 +1,62 @@
+# Reusable catch-up: start CI (and the deploy) for a production-branch commit
+# that no run has picked up.
+#
+# Merges made with GITHUB_TOKEN (for example Dependabot auto-merge) start no
+# push-triggered workflow, so `main` would never get CI or a deploy. This job
+# finds a branch tip with no run of the caller workflow and starts one with
+# workflow_dispatch, the one event GITHUB_TOKEN may trigger. It uses no extra
+# token. Run it on a schedule; the caller must grant `actions: write`.
+#
+#   uses: hashorva/cd-kit/.github/workflows/catch-up.yml@v0
+name: catch-up
+
+on:
+  workflow_call:
+    inputs:
+      branch:
+        description: Production branch to check.
+        type: string
+        default: main
+      workflow:
+        description: File name of the caller workflow to dispatch (must have a workflow_dispatch trigger).
+        type: string
+        default: cd.yml
+      runs-on:
+        description: >-
+          JSON runner label(s). Public repos must keep the GitHub-hosted
+          default. Private repos may pass e.g. '["self-hosted","macOS","mini"]'.
+        type: string
+        default: '"ubuntu-latest"'
+
+permissions:
+  contents: read
+
+jobs:
+  catch-up:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - name: Dispatch a run if the branch tip has none
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BRANCH: ${{ inputs.branch }}
+          WORKFLOW: ${{ inputs.workflow }}
+        run: |
+          api="$GITHUB_API_URL/repos/$REPO"
+          auth=(-H "Authorization: Bearer $GH_TOKEN")
+          sha=$(curl -fsS "${auth[@]}" -H "Accept: application/vnd.github.sha" "$api/commits/$BRANCH")
+          runs=$(curl -fsS "${auth[@]}" -H "Accept: application/vnd.github+json" \
+            "$api/actions/workflows/$WORKFLOW/runs?branch=$BRANCH&head_sha=$sha&per_page=1")
+          count=$(grep -o '"total_count": *[0-9]*' <<<"$runs" | head -n1 | grep -o '[0-9]*$' || true)
+          [[ -n "$count" ]] || { echo "::error::could not read the run count"; exit 1; }
+          if [[ "$count" -gt 0 ]]; then
+            echo "$BRANCH at ${sha:0:7} already has a $WORKFLOW run; nothing to do."
+            exit 0
+          fi
+          echo "$BRANCH at ${sha:0:7} has no $WORKFLOW run; dispatching one."
+          curl -fsS -X POST "${auth[@]}" -H "Accept: application/vnd.github+json" \
+            "$api/actions/workflows/$WORKFLOW/dispatches" -d "{\"ref\":\"$BRANCH\"}"

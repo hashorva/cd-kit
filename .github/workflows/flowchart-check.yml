@@ -1,0 +1,41 @@
+# Keeps the README flowcharts honest: a pull request that changes workflow
+# behaviour (.github/workflows/ or templates/) must also change README.md.
+# Escape hatch for changes that do not alter behaviour: label the PR
+# `no-flowchart-change`. GitHub-hosted runners only (cd-kit is public).
+name: flowchart-check
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  readme-flowcharts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: README changed with workflow changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          if grep -qF '"no-flowchart-change"' <<<"$LABELS"; then
+            echo "Label no-flowchart-change set; skipping."
+            exit 0
+          fi
+          files=$(gh api --paginate "repos/$REPO/pulls/$PR/files" --jq '.[].filename')
+          if ! grep -qE '^(\.github/workflows/|templates/)' <<<"$files"; then
+            echo "No workflow files changed."
+            exit 0
+          fi
+          if grep -qx 'README.md' <<<"$files"; then
+            echo "Workflow files and README.md both changed."
+            exit 0
+          fi
+          echo "::error::Workflow files changed but README.md did not. Update the mermaid flowcharts, or add the no-flowchart-change label if behaviour is unchanged."
+          exit 1

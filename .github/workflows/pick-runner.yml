@@ -1,0 +1,175 @@
+# Reusable runner picker for PRIVATE repositories: spend the included GitHub-
+# hosted minutes first, then fall back to a self-hosted runner.
+#
+#   pick:
+#     uses: hashorva/cd-kit/.github/workflows/pick-runner.yml@v0
+#     secrets:
+#       BILLING_READ_TOKEN: ${{ secrets.BILLING_READ_TOKEN }}
+#   ci:
+#     needs: pick
+#     uses: hashorva/cd-kit/.github/workflows/ci.yml@v0
+#     with:
+#       runs-on: ${{ needs.pick.outputs.runs-on }}
+#
+# Output `runs-on` is a JSON string for the `runs-on` input of the other
+# workflows: hosted when the remaining included minutes are above `threshold`,
+# otherwise `self-hosted-labels`. It falls back to self-hosted when the secret
+# is missing, an API call fails, or usage cannot be read clearly. It never
+# outputs self-hosted labels for a public repository.
+#
+# The picker job itself runs on `self-hosted-labels`, never on a GitHub-hosted
+# runner: hosted jobs round up to a minute, and with a $0 budget a hosted
+# picker cannot start once the included minutes are spent.
+name: pick-runner
+
+on:
+  workflow_call:
+    inputs:
+      self-hosted-labels:
+        description: JSON runner label(s) for the picker job and for the fallback.
+        type: string
+        default: '["self-hosted","macOS","mini"]'
+      hosted-labels:
+        description: JSON runner label(s) used while included minutes remain.
+        type: string
+        default: '"ubuntu-latest"'
+      threshold:
+        description: Use hosted runners while more than this many included minutes remain.
+        type: number
+        default: 200
+      included-minutes:
+        description: >-
+          Included Actions minutes per month. 0 (default) infers it from the
+          account plan: free 2000, pro 3000, team 3000, enterprise 50000.
+        type: number
+        default: 0
+    secrets:
+      BILLING_READ_TOKEN:
+        description: Fine-grained personal access token with Plan (read). Missing means self-hosted.
+        required: false
+    outputs:
+      runs-on:
+        description: JSON runs-on value to pass to ci.yml and deploy-cloudflare.yml.
+        value: ${{ jobs.pick.outputs.runs-on }}
+      reason:
+        description: Why that runner was chosen.
+        value: ${{ jobs.pick.outputs.reason }}
+
+permissions:
+  contents: read
+
+jobs:
+  pick:
+    runs-on: ${{ fromJSON(inputs.self-hosted-labels) }}
+    timeout-minutes: 5
+    outputs:
+      runs-on: ${{ steps.final.outputs.runs-on }}
+      reason: ${{ steps.final.outputs.reason }}
+    steps:
+      - name: Read remaining included minutes
+        id: pick
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          SELF_HOSTED: ${{ inputs.self-hosted-labels }}
+          HOSTED: ${{ inputs.hosted-labels }}
+          THRESHOLD: ${{ inputs.threshold }}
+          INCLUDED: ${{ inputs.included-minutes }}
+          BILLING_TOKEN: ${{ secrets.BILLING_READ_TOKEN }}
+        with:
+          script: |
+            const self = process.env.SELF_HOSTED;
+            const hosted = process.env.HOSTED;
+            JSON.parse(self); JSON.parse(hosted);
+            const pick = (runsOn, reason) => {
+              core.setOutput('runs-on', runsOn);
+              core.setOutput('reason', reason);
+              core.notice(`runs-on ${runsOn}: ${reason}`);
+            };
+
+            // Never self-hosted for a public repository; unknown counts as public.
+            let isPublic = true;
+            const priv = context.payload.repository && context.payload.repository.private;
+            if (typeof priv === 'boolean') {
+              isPublic = !priv;
+            } else {
+              try {
+                const r = await github.rest.repos.get(context.repo);
+                isPublic = !r.data.private;
+              } catch (e) { /* stay public */ }
+            }
+            if (isPublic) return pick(hosted, 'public or unknown visibility: never self-hosted');
+
+            try {
+              const token = process.env.BILLING_TOKEN;
+              if (!token) return pick(self, 'BILLING_READ_TOKEN is not set');
+              const api = getOctokit(token);
+              const owner = context.repo.owner;
+              const now = new Date();
+              const period = { year: now.getUTCFullYear(), month: now.getUTCMonth() + 1 };
+
+              const acct = (await api.request('GET /users/{username}', { username: owner })).data;
+              let plan, summary;
+              if (acct.type === 'User') {
+                const me = (await api.request('GET /user')).data;
+                if (me.login.toLowerCase() !== owner.toLowerCase()) {
+                  return pick(self, 'the token belongs to a different account than the repo owner');
+                }
+                plan = me.plan && me.plan.name;
+                summary = (await api.request('GET /users/{username}/settings/billing/usage/summary',
+                  { username: owner, ...period })).data;
+              } else {
+                plan = (await api.request('GET /orgs/{org}', { org: owner })).data.plan?.name;
+                summary = (await api.request('GET /organizations/{org}/settings/billing/usage/summary',
+                  { org: owner, ...period })).data;
+              }
+
+              const byPlan = { free: 2000, pro: 3000, team: 3000, enterprise: 50000 };
+              const included = Number(process.env.INCLUDED) > 0
+                ? Number(process.env.INCLUDED)
+                : byPlan[String(plan).toLowerCase()];
+              if (!included) return pick(self, `included minutes unknown for plan "${plan}"`);
+              if (!Array.isArray(summary.usageItems)) return pick(self, 'usage report has no usageItems');
+
+              // Included minutes are Linux-equivalent: Windows counts 2x, macOS 10x.
+              let used = 0;
+              for (const it of summary.usageItems) {
+                if (String(it.product).toLowerCase() !== 'actions') continue;
+                if (!String(it.unitType).toLowerCase().startsWith('minute')) continue;
+                const sku = String(it.sku).toLowerCase();
+                const factor = sku.includes('macos') ? 10 : sku.includes('windows') ? 2 : 1;
+                used += Number(it.grossQuantity) * factor;
+              }
+              if (!Number.isFinite(used)) return pick(self, 'usage is unclear');
+
+              const remaining = included - used;
+              const threshold = Number(process.env.THRESHOLD);
+              if (remaining > threshold) {
+                return pick(hosted, `${remaining} included minutes left (threshold ${threshold})`);
+              }
+              return pick(self, `${remaining} included minutes left (threshold ${threshold})`);
+            } catch (e) {
+              return pick(self, `billing lookup failed: ${e.message}`);
+            }
+
+      # If the script step could not run at all, still answer: self-hosted for a
+      # repo known to be private, GitHub-hosted otherwise (never self-hosted
+      # for a public or unknown repo).
+      - name: Output the result
+        id: final
+        if: always()
+        env:
+          PICKED: ${{ steps.pick.outputs.runs-on }}
+          REASON: ${{ steps.pick.outputs.reason }}
+          SELF_HOSTED: ${{ inputs.self-hosted-labels }}
+          HOSTED: ${{ inputs.hosted-labels }}
+          REPO_PRIVATE: ${{ github.event.repository.private }}
+        run: |
+          if [[ -n "$PICKED" ]]; then
+            out=$PICKED reason=$REASON
+          elif [[ "$REPO_PRIVATE" == true ]]; then
+            out=$SELF_HOSTED reason="picker step did not finish; using self-hosted"
+          else
+            out=$HOSTED reason="picker step did not finish; repo not known to be private"
+          fi
+          echo "runs-on=$out" >> "$GITHUB_OUTPUT"
+          echo "reason=$reason" >> "$GITHUB_OUTPUT"

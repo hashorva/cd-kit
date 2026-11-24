@@ -22,6 +22,9 @@ check() {
   if "$@"; then pass "$name"; else fail "$name"; fi
 }
 
+# not <command...>: pass when the command fails.
+not() { ! "$@"; }
+
 expect_ok() {
   local name=$1; shift
   if "$@" >/dev/null 2>&1; then pass "$name"; else fail "$name"; fi
@@ -44,6 +47,15 @@ else
   fail "renders ref and runs-on, no placeholders left"
 fi
 
+check "renders a gate job on the same runs-on" \
+  grep -qE '^  gate:$' "$wf"
+check "gate runs on the installed runs-on" grep -qF 'runs-on: "ubuntu-latest"' "$wf"
+check "deploys on vX.Y.Z tags too" grep -qF 'tags: ["v[0-9]+.[0-9]+.[0-9]+"]' "$wf"
+check "deploy can be held with CD_DEPLOY_ENABLED" grep -qF "vars.CD_DEPLOY_ENABLED != 'false'" "$wf"
+check "no repo-level secrets passed (environment-only)" not grep -q '^ *secrets:' "$wf"
+check "default template does not call pick-runner" not grep -q pick-runner "$wf"
+check "no catch-up file by default" test ! -e "$repo/.github/workflows/cd-catch-up.yml"
+
 expect_err "refuses to overwrite without --force" bash "$installer" --ref v0 --target "$repo"
 expect_ok "overwrites with --force" bash "$installer" --ref v0.1.0 --target "$repo" --force
 check "--force writes new ref" grep -q '@v0.1.0' "$wf"
@@ -63,6 +75,26 @@ expect_ok "allows mini on private repo" \
   bash "$installer" --ref v0 --runner mini --visibility private --target "$repo"
 check "renders mini runs-on" \
   grep -qF "runs-on: '[\"self-hosted\",\"macOS\",\"mini\"]'" "$repo/.github/workflows/cd.yml"
+
+repo=$(new_repo)
+expect_ok "--catch-up writes cd-catch-up.yml" bash "$installer" --ref v0 --target "$repo" --catch-up
+cu="$repo/.github/workflows/cd-catch-up.yml"
+check "catch-up renders branch and runs-on" grep -q 'branch: main' "$cu"
+check "catch-up runs-on is quoted JSON" grep -qF "runs-on: '\"ubuntu-latest\"'" "$cu"
+check "catch-up has no placeholders left" not grep -q '__[A-Z_]*__' "$cu"
+expect_err "refuses mini catch-up on public repo" \
+  bash "$installer" --ref v0 --runner mini --visibility public --catch-up --target "$(new_repo)"
+
+repo=$(new_repo)
+expect_ok "mini gate renders a YAML array" \
+  bash "$installer" --ref v0 --runner mini --visibility private --target "$repo"
+check "gate runs-on is the self-hosted array" \
+  grep -qF 'runs-on: ["self-hosted","macOS","mini"]' "$repo/.github/workflows/cd.yml"
+
+# cd-kit's own CI stays on GitHub-hosted runners.
+check "own CI has no self-hosted labels" not grep -l self-hosted \
+  "$root/.github/workflows/self-test.yml" "$root/.github/workflows/release.yml" \
+  "$root/.github/workflows/flowchart-check.yml"
 
 repo=$(new_repo)
 out=$(bash "$installer" --ref v0 --target "$repo" --dry-run --branch release --working-directory app)

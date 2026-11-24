@@ -22,13 +22,15 @@ branch="main"
 working_directory="."
 force=0
 dry_run=0
+catch_up=0
 
 usage() {
   cat <<EOF
 Usage: install.sh --ref <tag> [options]
 
 Writes .github/workflows/cd.yml into the target repository. The workflow
-calls cd-kit's reusable workflows pinned to <tag>.
+calls cd-kit's reusable workflows pinned to <tag>. Its gate job is the one
+required-check name for branch rulesets.
 
 Options:
   --ref <tag>              cd-kit release tag to pin (required), e.g. v0 or v0.1.0
@@ -41,6 +43,9 @@ Options:
                            Self-hosted runners are refused for public repos.
   --branch <name>          Branch that deploys to production (default: main)
   --working-directory <d>  Directory holding package.json (default: .)
+  --catch-up               Also write cd-catch-up.yml, an hourly job that starts cd
+                           for a branch tip no run picked up (e.g. a merge made
+                           with GITHUB_TOKEN). Off by default.
   --force                  Overwrite existing workflow files
   --dry-run                Print the files instead of writing them
   -h, --help               Show this help
@@ -61,6 +66,7 @@ while [ $# -gt 0 ]; do
     --visibility) need_arg "$@"; visibility="$2"; shift 2 ;;
     --branch) need_arg "$@"; branch="$2"; shift 2 ;;
     --working-directory) need_arg "$@"; working_directory="$2"; shift 2 ;;
+    --catch-up) catch_up=1; shift ;;
     --force) force=1; shift ;;
     --dry-run) dry_run=1; shift ;;
     -h|--help) usage; exit 0 ;;
@@ -150,8 +156,11 @@ render() {
   printf '%s\n' "$out"
 }
 
+templates="$TEMPLATES"
+[ "$catch_up" -eq 1 ] && templates="$templates cd-catch-up.yml"
+
 dest_dir="$target/.github/workflows"
-for name in $TEMPLATES; do
+for name in $templates; do
   dest="$dest_dir/$name"
   content=$(render "$name")
   if [ "$dry_run" -eq 1 ]; then
@@ -169,8 +178,11 @@ done
 if [ "$dry_run" -ne 1 ]; then
   cat >&2 <<EOF
 cd-kit: next steps
-  1. Add repository secrets CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID
-     (or scope them to the "production" environment).
-  2. Commit .github/workflows/ and open a pull request.
+  1. Add CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID as secrets on the
+     "production" environment only, so pull-request jobs never see them. On a
+     public repo, limit that environment to the $branch branch and v* tags.
+  2. In the branch ruleset, require the status check "gate", and do not set
+     "Require deployments to succeed".
+  3. Commit .github/workflows/ and open a pull request.
 EOF
 fi

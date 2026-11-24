@@ -3,9 +3,11 @@
 #
 # Callers pin a release tag:
 #   uses: hashorva/cd-kit/.github/workflows/deploy-cloudflare.yml@v0
-#   secrets:
-#     CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-#     CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+#
+# CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are read from the GitHub
+# Environment this job declares, so keep them there and pull-request jobs never
+# see them. Callers that still keep them as repository secrets can pass them
+# with `secrets:` (or `secrets: inherit`) as before.
 name: deploy-cloudflare
 
 on:
@@ -53,15 +55,28 @@ on:
         description: Download the "build" artifact from ci.yml into this path (relative to working-directory) instead of building again.
         type: string
         default: ""
+      production-branch:
+        description: >-
+          Branch whose tip deploys. When the run is on this branch and a newer
+          commit has since landed on it, the run stands aside before installing
+          and deploys nothing. Empty (default) never stands aside; leave it
+          empty for tag deploys so an older tag can roll back.
+        type: string
+        default: ""
     secrets:
       CLOUDFLARE_API_TOKEN:
-        required: true
+        description: Optional. Defaults to the secret on the GitHub Environment.
+        required: false
       CLOUDFLARE_ACCOUNT_ID:
-        required: true
+        description: Optional. Defaults to the secret on the GitHub Environment.
+        required: false
     outputs:
       deployment-url:
         description: URL wrangler reported for the deployment, if any.
         value: ${{ jobs.deploy.outputs.deployment-url }}
+      deployed:
+        description: '"true" when wrangler ran; "false" when the run stood aside.'
+        value: ${{ jobs.deploy.outputs.deployed }}
 
 permissions:
   contents: read
@@ -78,16 +93,44 @@ jobs:
       cancel-in-progress: false
     outputs:
       deployment-url: ${{ steps.wrangler.outputs.deployment-url }}
+      deployed: ${{ steps.tip.outputs.stale == 'false' }}
     defaults:
       run:
         shell: bash
         working-directory: ${{ inputs.working-directory }}
     steps:
+      # Runs once this job holds the environment's queue slot, so a run that
+      # waited behind another deploy sees the newest main here.
+      - name: Check this run is still the tip of the production branch
+        id: tip
+        working-directory: ${{ github.workspace }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BRANCH: ${{ inputs.production-branch }}
+          REPO: ${{ github.repository }}
+          REF: ${{ github.ref }}
+          SHA: ${{ github.sha }}
+        run: |
+          stale=false
+          if [[ -n "$BRANCH" && "$REF" == "refs/heads/$BRANCH" ]]; then
+            tip=$(curl -fsS \
+              -H "Authorization: Bearer $GH_TOKEN" \
+              -H "Accept: application/vnd.github.sha" \
+              "$GITHUB_API_URL/repos/$REPO/commits/$BRANCH")
+            if [[ "$tip" != "$SHA" ]]; then
+              stale=true
+              echo "::notice::$BRANCH moved to ${tip:0:7}; standing aside for ${SHA:0:7}. Nothing deployed."
+            fi
+          fi
+          echo "stale=$stale" >> "$GITHUB_OUTPUT"
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        if: steps.tip.outputs.stale == 'false'
         with:
           persist-credentials: false
 
       - name: Detect package manager
+        if: steps.tip.outputs.stale == 'false'
         id: pm
         run: |
           if   [[ -f pnpm-lock.yaml ]]; then pm=pnpm
@@ -99,6 +142,7 @@ jobs:
           echo "Detected package manager: $pm"
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        if: steps.tip.outputs.stale == 'false'
         with:
           node-version: ${{ inputs.node-version-file == '' && inputs.node-version || '' }}
           node-version-file: ${{ inputs.node-version-file != '' && format('{0}/{1}', inputs.working-directory, inputs.node-version-file) || '' }}
@@ -106,13 +150,14 @@ jobs:
           cache-dependency-path: ${{ steps.pm.outputs.name == 'npm' && format('{0}/package-lock.json', inputs.working-directory) || '' }}
 
       - name: Enable corepack (pnpm, yarn)
-        if: steps.pm.outputs.name == 'pnpm' || steps.pm.outputs.name == 'yarn'
+        if: steps.tip.outputs.stale == 'false' && (steps.pm.outputs.name == 'pnpm' || steps.pm.outputs.name == 'yarn')
         run: corepack enable
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
-        if: steps.pm.outputs.name == 'bun'
+        if: steps.tip.outputs.stale == 'false' && steps.pm.outputs.name == 'bun'
 
       - name: Install dependencies
+        if: steps.tip.outputs.stale == 'false'
         env:
           PM: ${{ steps.pm.outputs.name }}
         run: |
@@ -130,14 +175,14 @@ jobs:
           esac
 
       - name: Download build artifact
-        if: inputs.build-artifact-path != ''
+        if: steps.tip.outputs.stale == 'false' && inputs.build-artifact-path != ''
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: build
           path: ${{ inputs.working-directory }}/${{ inputs.build-artifact-path }}
 
       - name: Build
-        if: inputs.build-artifact-path == ''
+        if: steps.tip.outputs.stale == 'false' && inputs.build-artifact-path == ''
         env:
           PM: ${{ steps.pm.outputs.name }}
           CMD: ${{ inputs.build-command }}
@@ -153,6 +198,7 @@ jobs:
           fi
 
       - name: Deploy with wrangler
+        if: steps.tip.outputs.stale == 'false'
         id: wrangler
         uses: cloudflare/wrangler-action@953926a2e2182532811c01a25e53647d93bf07c0 # v4.1.3
         with:
