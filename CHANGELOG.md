@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Changed: `install.sh --runner` takes `github` (default) or `self-hosted`, which installs `runs-on: ["self-hosted"]`. The `mini` preset is removed; pass specific labels with `--runs-on '<json>'`. Workflows already installed are not affected.
+- Changed: `pick-runner.yml` input `self-hosted-labels` defaults to `'["self-hosted"]'` (was a machine-specific label set). Callers that relied on the old default should pass their labels.
+- Docs: README and input descriptions no longer reference a specific project or machine.
 - Added: `gate` job in the caller template. It always runs and fails unless CI succeeded; require it in rulesets instead of `ci`.
 - Added: deploys also run on `vX.Y.Z` tags (an older tag is a rollback); the new `release` job in the template uses `deploy-cloudflare.yml` with no stand-aside.
 - Added: hold deploys with the repository variable `CD_DEPLOY_ENABLED=false`; unset still deploys.

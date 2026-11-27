@@ -9,7 +9,7 @@
 set -euo pipefail
 
 CD_KIT_REPO="hashorva/cd-kit"
-MINI_RUNS_ON='["self-hosted","macOS","mini"]'
+SELF_HOSTED_RUNS_ON='["self-hosted"]'
 GITHUB_RUNS_ON='"ubuntu-latest"'
 TEMPLATES="cd.yml"
 
@@ -35,7 +35,9 @@ required-check name for branch rulesets.
 Options:
   --ref <tag>              cd-kit release tag to pin (required), e.g. v0 or v0.1.0
   --target <dir>           Repository to install into (default: .)
-  --runner github|mini     GitHub-hosted (default) or self-hosted Mac mini runners
+  --runner github|self-hosted
+                           GitHub-hosted (default), or any self-hosted runner
+                           (runs-on ["self-hosted"])
   --runs-on <json>         Explicit runs-on JSON, overrides --runner
                            e.g. '"ubuntu-24.04"' or '["self-hosted","linux"]'
   --visibility public|private
@@ -93,8 +95,8 @@ esac
 if [ -z "$runs_on" ]; then
   case "$runner" in
     github) runs_on="$GITHUB_RUNS_ON" ;;
-    mini) runs_on="$MINI_RUNS_ON" ;;
-    *) die "--runner must be github or mini (got $runner)" ;;
+    self-hosted) runs_on="$SELF_HOSTED_RUNS_ON" ;;
+    *) die "--runner must be github or self-hosted (got $runner)" ;;
   esac
 fi
 case "$runs_on" in

@@ -65,16 +65,25 @@ expect_err "rejects branch as ref" bash "$installer" --ref main --target "$(new_
 expect_err "rejects unknown option" bash "$installer" --ref v0 --bogus
 expect_err "rejects non-JSON runs-on" bash "$installer" --ref v0 --runs-on ubuntu-latest --target "$(new_repo)"
 
-expect_err "refuses mini on public repo" \
-  bash "$installer" --ref v0 --runner mini --visibility public --target "$(new_repo)"
-expect_err "refuses mini when visibility unknown" \
-  bash "$installer" --ref v0 --runner mini --target "$(new_repo)"
+expect_err "rejects unknown --runner" bash "$installer" --ref v0 --runner bogus --target "$(new_repo)"
+expect_err "refuses self-hosted on public repo" \
+  bash "$installer" --ref v0 --runner self-hosted --visibility public --target "$(new_repo)"
+expect_err "refuses self-hosted when visibility unknown" \
+  bash "$installer" --ref v0 --runner self-hosted --target "$(new_repo)"
+expect_err "refuses self-hosted --runs-on labels on public repo" \
+  bash "$installer" --ref v0 --runs-on '["self-hosted","linux"]' --visibility public --target "$(new_repo)"
 
 repo=$(new_repo)
-expect_ok "allows mini on private repo" \
-  bash "$installer" --ref v0 --runner mini --visibility private --target "$repo"
-check "renders mini runs-on" \
-  grep -qF "runs-on: '[\"self-hosted\",\"macOS\",\"mini\"]'" "$repo/.github/workflows/cd.yml"
+expect_ok "allows self-hosted on private repo" \
+  bash "$installer" --ref v0 --runner self-hosted --visibility private --target "$repo"
+check "renders self-hosted runs-on" \
+  grep -qF "runs-on: '[\"self-hosted\"]'" "$repo/.github/workflows/cd.yml"
+
+repo=$(new_repo)
+expect_ok "allows custom self-hosted labels on private repo" \
+  bash "$installer" --ref v0 --runs-on '["self-hosted","linux"]' --visibility private --target "$repo"
+check "renders custom labels" \
+  grep -qF "runs-on: '[\"self-hosted\",\"linux\"]'" "$repo/.github/workflows/cd.yml"
 
 repo=$(new_repo)
 expect_ok "--catch-up writes cd-catch-up.yml" bash "$installer" --ref v0 --target "$repo" --catch-up
@@ -82,14 +91,14 @@ cu="$repo/.github/workflows/cd-catch-up.yml"
 check "catch-up renders branch and runs-on" grep -q 'branch: main' "$cu"
 check "catch-up runs-on is quoted JSON" grep -qF "runs-on: '\"ubuntu-latest\"'" "$cu"
 check "catch-up has no placeholders left" not grep -q '__[A-Z_]*__' "$cu"
-expect_err "refuses mini catch-up on public repo" \
-  bash "$installer" --ref v0 --runner mini --visibility public --catch-up --target "$(new_repo)"
+expect_err "refuses self-hosted catch-up on public repo" \
+  bash "$installer" --ref v0 --runner self-hosted --visibility public --catch-up --target "$(new_repo)"
 
 repo=$(new_repo)
-expect_ok "mini gate renders a YAML array" \
-  bash "$installer" --ref v0 --runner mini --visibility private --target "$repo"
+expect_ok "self-hosted gate renders a YAML array" \
+  bash "$installer" --ref v0 --runner self-hosted --visibility private --target "$repo"
 check "gate runs-on is the self-hosted array" \
-  grep -qF 'runs-on: ["self-hosted","macOS","mini"]' "$repo/.github/workflows/cd.yml"
+  grep -qF 'runs-on: ["self-hosted"]' "$repo/.github/workflows/cd.yml"
 
 # cd-kit's own CI stays on GitHub-hosted runners.
 check "own CI has no self-hosted labels" not grep -l self-hosted \

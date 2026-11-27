@@ -1,12 +1,10 @@
 # cd-kit
 
-Reusable, auto-installing continuous-deployment recipe extracted from [finduck](https://github.com/hashorva/finduck).
+Reusable, auto-installing continuous deployment for JavaScript and TypeScript projects that deploy to Cloudflare Workers.
 
-It packages versioned GitHub Actions reusable workflows and an installer for Zamir's other projects (Astro+EmDash, Vite, Tailwind, React, shadcn; Cloudflare Workers; GitHub; Mac mini runners for private repos, GitHub-hosted for public). Callers pin a release tag.
+It packages versioned GitHub Actions reusable workflows and an installer that adds them to any repository. CI detects npm, pnpm, Yarn or Bun and runs the project's own lint, typecheck, test and build scripts. Callers pin a release tag.
 
-This repository is public. Public consumers stay on GitHub-hosted runners. Private consumers may pass self-hosted Mini runners through a `runs-on` input.
-
-See [hashorva/finduck#237](https://github.com/hashorva/finduck/issues/237).
+This repository is public. Public repositories stay on GitHub-hosted runners. Private repositories may pass their own self-hosted runner labels through a `runs-on` input.
 
 ## How it works
 
@@ -111,11 +109,11 @@ flowchart LR
     direction TB
     run("install.sh --ref vX") --> runner{"--runner"}
     runner -- github --> hosted("runs-on: ubuntu-latest")
-    runner -- mini --> visibility{"repository private?"}
-    visibility -- yes --> mini("runs-on: self-hosted, macOS, mini")
+    runner -- "self-hosted, or --runs-on labels" --> visibility{"repository private?"}
+    visibility -- yes --> selfhosted("runs-on: your self-hosted labels")
     visibility -- "no / unknown" --> refused(["refused"])
     hosted --> cd(".github/workflows/cd.yml<br/>uses: hashorva/cd-kit/…@vX")
-    mini --> cd
+    selfhosted --> cd
     cd -. "--catch-up" .-> cu("cd-catch-up.yml")
   end
 
@@ -127,7 +125,7 @@ flowchart LR
   classDef decision fill:#fef3c6,stroke:#e17100,color:#7b3306
   classDef refused fill:#ffe4e6,stroke:#ec003f,color:#8b0836
   class cut,release,ghrelease,major release
-  class run,hosted,mini,cd,cu install
+  class run,hosted,selfhosted,cd,cu install
   class runner,visibility decision
   class refused refused
 ```
@@ -151,7 +149,7 @@ This writes `.github/workflows/cd.yml`, which runs CI on every pull request and 
 | Option | Default | |
 | --- | --- | --- |
 | `--ref <tag>` | required | cd-kit tag to pin: `v0` follows the latest v0 release, `v0.1.0` is fixed |
-| `--runner github\|mini` | `github` | `mini` uses `["self-hosted","macOS","mini"]` |
+| `--runner github\|self-hosted` | `github` | `self-hosted` uses `["self-hosted"]` |
 | `--runs-on <json>` | | explicit runner labels, overrides `--runner` |
 | `--visibility public\|private` | detected with `gh` | self-hosted runners are refused for public repos |
 | `--branch <name>` | `main` | branch that deploys to production |
@@ -160,10 +158,10 @@ This writes `.github/workflows/cd.yml`, which runs CI on every pull request and 
 | `--force` | | overwrite an existing `cd.yml` (use to upgrade) |
 | `--dry-run` | | print instead of writing |
 
-Private repo on the Mac mini:
+Private repo on your own self-hosted runners, targeting their labels:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/hashorva/cd-kit/v0/install.sh | bash -s -- --ref v0 --runner mini
+curl -fsSL https://raw.githubusercontent.com/hashorva/cd-kit/v0/install.sh | bash -s -- --ref v0 --runs-on '["self-hosted","linux"]'
 ```
 
 ## Reusable workflows
@@ -228,7 +226,7 @@ For **private** repos: spend the included GitHub-hosted minutes first, then fall
 
 | Input | Default | |
 | --- | --- | --- |
-| `self-hosted-labels` | `'["self-hosted","macOS","mini"]'` | runs the picker itself and is the fallback |
+| `self-hosted-labels` | `'["self-hosted"]'` | runs the picker itself and is the fallback |
 | `hosted-labels` | `'"ubuntu-latest"'` | used while minutes remain |
 | `threshold` | `200` | hosted while more than this many included minutes remain |
 | `included-minutes` | `0` | monthly included minutes; 0 infers them from the plan (free 2000, pro/team 3000, enterprise 50000) |
@@ -250,8 +248,6 @@ bash tests/install.sh
 The `self-test` workflow runs the same checks, then installs into a scratch repo and lints the generated workflow. The `flowchart-check` workflow fails a pull request that changes `.github/workflows/` or `templates/` without changing this README; the `no-flowchart-change` label skips it for changes that do not alter behaviour. cd-kit's own workflows stay on GitHub-hosted runners.
 
 ## Sources
-
-Origin: [hashorva/finduck#237](https://github.com/hashorva/finduck/issues/237).
 
 GitHub Actions:
 

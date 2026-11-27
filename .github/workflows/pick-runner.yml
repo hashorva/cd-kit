@@ -28,7 +28,7 @@ on:
       self-hosted-labels:
         description: JSON runner label(s) for the picker job and for the fallback.
         type: string
-        default: '["self-hosted","macOS","mini"]'
+        default: '["self-hosted"]'
       hosted-labels:
         description: JSON runner label(s) used while included minutes remain.
         type: string
