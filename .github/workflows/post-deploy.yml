@@ -20,7 +20,7 @@ on:
       runs-on:
         description: >-
           JSON runner label(s). Public repos must keep the GitHub-hosted
-          default. Private repos may pass e.g. '["self-hosted","macOS","mini"]'.
+          default. Private repos may pass e.g. '["self-hosted","linux"]'.
         type: string
         default: '"ubuntu-latest"'
       working-directory:
