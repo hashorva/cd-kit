@@ -11,6 +11,8 @@ set -euo pipefail
 CD_KIT_REPO="hashorva/cd-kit"
 SELF_HOSTED_RUNS_ON='["self-hosted"]'
 GITHUB_RUNS_ON='"ubuntu-latest"'
+# --runner auto: one line per registered runner, "<status><TAB><custom labels, sorted, comma-joined>".
+RUNNERS_JQ='.runners[] | [.status, ([.labels[] | select(.type == "custom") | .name] | sort | join(","))] | @tsv'
 TEMPLATES="cd.yml"
 
 ref=""
@@ -35,9 +37,11 @@ required-check name for branch rulesets.
 Options:
   --ref <tag>              cd-kit release tag to pin (required), e.g. v0 or v0.1.0
   --target <dir>           Repository to install into (default: .)
-  --runner github|self-hosted
-                           GitHub-hosted (default), or any self-hosted runner
-                           (runs-on ["self-hosted"])
+  --runner github|self-hosted|auto
+                           GitHub-hosted (default); any self-hosted runner
+                           (runs-on ["self-hosted"]); or auto: detect the
+                           repository's registered self-hosted runners with gh
+                           and use their labels, else GitHub-hosted
   --runs-on <json>         Explicit runs-on JSON, overrides --runner
                            e.g. '"ubuntu-24.04"' or '["self-hosted","linux"]'
   --visibility public|private
@@ -96,22 +100,23 @@ if [ -z "$runs_on" ]; then
   case "$runner" in
     github) runs_on="$GITHUB_RUNS_ON" ;;
     self-hosted) runs_on="$SELF_HOSTED_RUNS_ON" ;;
-    *) die "--runner must be github or self-hosted (got $runner)" ;;
+    auto) ;; # resolved below, once the visibility is known
+    *) die "--runner must be github, self-hosted or auto (got $runner)" ;;
   esac
 fi
-case "$runs_on" in
-  *"'"*) die "--runs-on must not contain single quotes" ;;
-  \"*\"|\[*\]) ;;
-  *) die "--runs-on must be JSON: a quoted label or an array, e.g. '\"ubuntu-latest\"'" ;;
-esac
+
+validate_runs_on() {
+  case "$runs_on" in
+    *"'"*) die "--runs-on must not contain single quotes" ;;
+    \"*\"|\[*\]) ;;
+    *) die "--runs-on must be JSON: a quoted label or an array, e.g. '\"ubuntu-latest\"'" ;;
+  esac
+}
+[ -z "$runs_on" ] || validate_runs_on
 
 [ -d "$target" ] || die "target directory not found: $target"
 [ -f "$target/$working_directory/package.json" ] \
   || info "warning: no package.json in $target/$working_directory"
-
-# Self-hosted runners execute untrusted pull-request code on a public repo.
-self_hosted=0
-case "$runs_on" in *self-hosted*) self_hosted=1 ;; esac
 
 if [ -z "$visibility" ] && command -v gh >/dev/null 2>&1; then
   visibility=$( (cd "$target" && gh repo view --json visibility -q .visibility 2>/dev/null) \
@@ -121,6 +126,65 @@ case "$visibility" in
   public|private|internal|"") ;;
   *) die "--visibility must be public or private (got $visibility)" ;;
 esac
+
+# --runner auto: use the labels of the repository's registered self-hosted
+# runners. Public repositories always get GitHub-hosted runners.
+detect_runs_on() {
+  local repo rows groups count labels total online json label list
+  case "$visibility" in
+    public)
+      info "--runner auto: public repository, using GitHub-hosted runners"
+      echo "$GITHUB_RUNS_ON"; return ;;
+    private|internal) ;;
+    *) die "--runner auto needs the repository visibility; pass --visibility private, or install gh" ;;
+  esac
+  command -v gh >/dev/null 2>&1 \
+    || die "--runner auto needs gh logged in with admin access to the repository"
+  repo=$( (cd "$target" && gh repo view --json nameWithOwner -q .nameWithOwner) 2>/dev/null || true)
+  [ -n "$repo" ] || die "--runner auto: cannot identify the GitHub repository in $target"
+  rows=$(gh api "repos/$repo/actions/runners" --paginate --jq "$RUNNERS_JQ" 2>/dev/null) \
+    || die "--runner auto: cannot list the self-hosted runners of $repo (needs admin access); pass --runs-on instead"
+  if [ -z "$rows" ]; then
+    info "--runner auto: no self-hosted runners registered for $repo, using GitHub-hosted runners"
+    info "  runners that register only when a job starts (ephemeral pools) are not detected; pass --runs-on for those"
+    echo "$GITHUB_RUNS_ON"; return
+  fi
+  groups=$(printf '%s\n' "$rows" | awk -F '\t' '
+    { n[$2]++; if ($1 == "online") o[$2]++ }
+    END { for (k in n) printf "%d\t%d\t%s\n", n[k], o[k] + 0, k }')
+  count=$(printf '%s\n' "$groups" | wc -l | tr -d ' ')
+  if [ "$count" -gt 1 ]; then
+    info "--runner auto: the self-hosted runners of $repo carry different labels:"
+    printf '%s\n' "$groups" | sort -t "$(printf '\t')" -k 3 | while IFS=$'\t' read -r total online labels; do
+      info "  [${labels:-no custom labels}] $total runner(s), $online online"
+    done
+    die "choose one set with --runs-on, e.g. --runs-on '[\"self-hosted\",\"<label>\"]'"
+  fi
+  IFS=$'\t' read -r total online labels <<<"$groups"
+  json='["self-hosted"'
+  if [ -n "$labels" ]; then
+    IFS=',' read -r -a list <<<"$labels"
+    for label in "${list[@]}"; do
+      case "$label" in
+        *[!A-Za-z0-9._-]*) die "--runner auto: unsupported runner label: $label; pass --runs-on instead" ;;
+      esac
+      json="$json,\"$label\""
+    done
+  fi
+  json="$json]"
+  info "--runner auto: $total self-hosted runner(s) for $repo, $online online: runs-on $json"
+  [ "$online" -gt 0 ] || info "  warning: none is online now; jobs will wait until one is"
+  echo "$json"
+}
+
+if [ -z "$runs_on" ]; then
+  runs_on=$(detect_runs_on)
+  validate_runs_on
+fi
+
+# Self-hosted runners execute untrusted pull-request code on a public repo.
+self_hosted=0
+case "$runs_on" in *self-hosted*) self_hosted=1 ;; esac
 if [ "$self_hosted" -eq 1 ]; then
   case "$visibility" in
     public) die "self-hosted runners are not allowed for public repositories; use --runner github" ;;

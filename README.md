@@ -110,6 +110,10 @@ flowchart LR
     run("install.sh --ref vX") --> runner{"--runner"}
     runner -- github --> hosted("runs-on: ubuntu-latest")
     runner -- "self-hosted, or --runs-on labels" --> visibility{"repository private?"}
+    runner -- auto --> detect{"private, with<br/>registered self-hosted runners?"}
+    detect -- "yes, one label set" --> selfhosted
+    detect -- "public, or none registered" --> hosted
+    detect -- "several label sets,<br/>or visibility unknown" --> refused
     visibility -- yes --> selfhosted("runs-on: your self-hosted labels")
     visibility -- "no / unknown" --> refused(["refused"])
     hosted --> cd(".github/workflows/cd.yml<br/>uses: hashorva/cd-kit/…@vX")
@@ -126,7 +130,7 @@ flowchart LR
   classDef refused fill:#ffe4e6,stroke:#ec003f,color:#8b0836
   class cut,release,ghrelease,major release
   class run,hosted,selfhosted,cd,cu install
-  class runner,visibility decision
+  class runner,visibility,detect decision
   class refused refused
 ```
 
@@ -149,7 +153,7 @@ This writes `.github/workflows/cd.yml`, which runs CI on every pull request and 
 | Option | Default | |
 | --- | --- | --- |
 | `--ref <tag>` | required | cd-kit tag to pin: `v0` follows the latest v0 release, `v0.1.0` is fixed |
-| `--runner github\|self-hosted` | `github` | `self-hosted` uses `["self-hosted"]` |
+| `--runner github\|self-hosted\|auto` | `github` | `self-hosted` uses `["self-hosted"]`; `auto` detects the repository's runners (see below) |
 | `--runs-on <json>` | | explicit runner labels, overrides `--runner` |
 | `--visibility public\|private` | detected with `gh` | self-hosted runners are refused for public repos |
 | `--branch <name>` | `main` | branch that deploys to production |
@@ -163,6 +167,14 @@ Private repo on your own self-hosted runners, targeting their labels:
 ```sh
 curl -fsSL https://raw.githubusercontent.com/hashorva/cd-kit/v0/install.sh | bash -s -- --ref v0 --runs-on '["self-hosted","linux"]'
 ```
+
+Or let the installer find them:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/hashorva/cd-kit/v0/install.sh | bash -s -- --ref v0 --runner auto
+```
+
+`--runner auto` asks `gh` for the self-hosted runners registered on the repository, which needs admin access to it. When they all carry the same custom labels, it installs `["self-hosted", <those labels>]` and says how many are online. A public repository, or one with no registered runners, gets GitHub-hosted runners. Runners with different label sets stop the install and are listed, so you can pick one with `--runs-on`. It does not see organization-level runners, or ephemeral pools whose runners register only when a job starts; pass `--runs-on` for those.
 
 ## Reusable workflows
 

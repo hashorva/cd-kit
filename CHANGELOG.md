@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Added: `install.sh --runner auto`. It detects the repository's registered self-hosted runners with `gh` and installs their labels; public repositories and repositories with no runners get GitHub-hosted runners, and runners with different label sets stop the install. The default stays `github`.
 - Changed: `install.sh --runner` takes `github` (default) or `self-hosted`, which installs `runs-on: ["self-hosted"]`. The `mini` preset is removed; pass specific labels with `--runs-on '<json>'`. Workflows already installed are not affected.
 - Changed: `pick-runner.yml` input `self-hosted-labels` defaults to `'["self-hosted"]'` (was a machine-specific label set). Callers that relied on the old default should pass their labels.
 - Docs: README and input descriptions no longer reference a specific project or machine.
